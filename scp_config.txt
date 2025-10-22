@@ -1,0 +1,24 @@
+# Spatial CIMIS Processing Configuration
+# Edit these paths and parameters as needed for your system
+
+# Variable to process (e.g., Tx, ETo, Tn, Rs, etc.)
+variable = ETo
+
+# Data paths
+data_path = /group/moniergrp/SpatialCIMIS/ascii/
+netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/test/
+output_path = /home/salba/SpatialCIMIS/data/
+
+# Processing years
+start_year = 2004
+end_year = 2023
+mask_years = 2004-2023
+
+# Processing options (set to true/false)
+process_mask = false
+process_data = true
+use_mask = false
+process_2d = false
+process_daily_clim = false
+process_monthly_clim = false
+process_all = false

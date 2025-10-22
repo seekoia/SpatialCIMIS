@@ -1,0 +1,9 @@
+# Plotting Configuration for Rs
+variable = Rs
+output_path = /home/salba/SpatialCIMIS/output/
+shapefile_path = CA_State.shp
+
+
+
+
+

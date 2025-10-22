@@ -1,0 +1,38 @@
+# Spatial CIMIS Analysis Configuration File
+# This configuration file controls the data I/O and analysis parameters
+
+# Variable to analyze (Tx, ETo, Tn, Rs, etc.)
+variable = ETo
+
+# Data paths
+station_csv_path = /group/moniergrp/SpatialCIMIS/CIMIS/
+station_list_file = CIMIS_Stations.csv
+spatial_netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/
+gridmet_netcdf_path = /group/moniergrp/gridMET/
+output_path = /home/salba/SpatialCIMIS/output/
+shapefile_path = CA_State.shp
+
+# Date range for analysis
+start_date = 2004-01-01
+end_date = 2024-01-01
+
+# Station filtering
+# Minimum data coverage threshold (days with data)
+min_station_coverage = 600
+
+# Analysis options
+compute_climatology = true
+match_gridmet = true
+extract_station_pixels = true
+
+# Output file names
+spatial_mean_output = spatial_mean_{variable}.nc
+gridmet_mean_output = gridmet_mean_{variable}.nc
+station_data_output = station_{variable}_data.csv
+
+# Plotting options
+plot_spatial_comparison = true
+plot_station_timeseries = true
+plot_stations = 158,84,117,15,136
+
+
