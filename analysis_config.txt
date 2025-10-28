@@ -7,9 +7,9 @@ variable = ETo
 # Data paths
 station_csv_path = /group/moniergrp/SpatialCIMIS/CIMIS/
 station_list_file = CIMIS_Stations.csv
-spatial_netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/
+spatial_netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/test/
 gridmet_netcdf_path = /group/moniergrp/gridMET/
-output_path = /home/salba/SpatialCIMIS/output/
+output_path = /home/salba/SpatialCIMIS/output/test/
 shapefile_path = CA_State.shp
 
 # Date range for analysis
@@ -33,6 +33,7 @@ station_data_output = station_{variable}_data.csv
 # Plotting options
 plot_spatial_comparison = true
 plot_station_timeseries = true
-plot_stations = 158,84,117,15,136
+#plot_stations = 158,152,117,15,136
+plot_stations = 144, 152, 131, 35, 105
 
 

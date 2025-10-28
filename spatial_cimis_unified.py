@@ -294,6 +294,12 @@ def load_gridmet_data(config):
         elif 'surface_downwelling_shortwave_flux_in_air' in gridmet_ds.data_vars:
             gridmet_data = gridmet_ds['surface_downwelling_shortwave_flux_in_air']
             print(f"  Using variable: surface_downwelling_shortwave_flux_in_air")
+        elif 'air_temperature' in gridmet_ds.data_vars and variable in ['Tx', 'Tn']:
+            gridmet_data = gridmet_ds['air_temperature']
+            print(f"  Using variable: air_temperature")
+        elif 'temperature' in gridmet_ds.data_vars and variable in ['Tx', 'Tn']:
+            gridmet_data = gridmet_ds['temperature']
+            print(f"  Using variable: temperature")
         else:
             data_vars = [v for v in gridmet_ds.data_vars 
                         if v not in ['lat', 'lon', 'crs', 'spatial_ref', 'day']]
@@ -357,6 +363,10 @@ def load_gridmet_yearly(gridmet_path, gridmet_var, start_year, end_year):
                 data_year = ds['potential_evapotranspiration']
             elif 'surface_downwelling_shortwave_flux_in_air' in ds.data_vars:
                 data_year = ds['surface_downwelling_shortwave_flux_in_air']
+            elif 'air_temperature' in ds.data_vars and variable in ['Tx', 'Tn']:
+                data_year = ds['air_temperature']
+            elif 'temperature' in ds.data_vars and variable in ['Tx', 'Tn']:
+                data_year = ds['temperature']
             else:
                 data_vars = [v for v in ds.data_vars 
                             if v not in ['lat', 'lon', 'crs', 'spatial_ref', 'day']]

@@ -122,15 +122,38 @@ def create_spatial_comparison_plot(config):
             gridmet_var_name = 'surface_downwelling_shortwave_flux_in_air'
         elif 'srad' in gridmet_ds.data_vars:
             gridmet_var_name = 'srad'
+    elif gridmet_var_name is None and variable == 'ETo':
+        if 'potential_evapotranspiration' in gridmet_ds.data_vars:
+            gridmet_var_name = 'potential_evapotranspiration'
+        elif 'pet' in gridmet_ds.data_vars:
+            gridmet_var_name = 'pet'
+    elif gridmet_var_name is None and variable in ['Tx', 'Tn']:
+        if 'air_temperature' in gridmet_ds.data_vars:
+            gridmet_var_name = 'air_temperature'
+        elif 'temperature' in gridmet_ds.data_vars:
+            gridmet_var_name = 'temperature'
     
     if gridmet_var_name is None:
         raise KeyError(f"Variable '{variable}' not found in GridMET dataset. Available: {list(gridmet_ds.data_vars)}")
     
     print(f"  Using GridMET variable: '{gridmet_var_name}'")
     
-    gridmet_data = gridmet_ds[gridmet_var_name].mean(dim='day_of_year')
+    # Check if this is already a climatological mean (no day_of_year dimension)
+    if 'day_of_year' in gridmet_ds[gridmet_var_name].dims:
+        gridmet_data = gridmet_ds[gridmet_var_name].mean(dim='day_of_year')
+        print(f"  Computing climatological mean from daily data...")
+    else:
+        gridmet_data = gridmet_ds[gridmet_var_name]
+        print(f"  Using pre-computed climatological mean (no day_of_year dimension)")
+    
     print(f"  Shape: {gridmet_data.shape}")
     print(f"  Value range: {float(gridmet_data.min()):.2f} to {float(gridmet_data.max()):.2f}")
+    
+    # Convert GridMET temperature from Kelvin to Celsius if needed
+    if variable in ['Tx', 'Tn'] and float(gridmet_data.min()) > 200:
+        print(f"  Converting GridMET temperature from Kelvin to Celsius (-273.15)...")
+        gridmet_data = gridmet_data - 273.15
+        print(f"  New value range: {float(gridmet_data.min()):.2f} to {float(gridmet_data.max()):.2f} °C")
     
     # Load California shapefile
     print("\n3. Loading California shapefile...")
@@ -152,7 +175,8 @@ def create_spatial_comparison_plot(config):
     if 'x' in spatial_data.dims and 'y' in spatial_data.dims:
         spatial_data.rio.set_spatial_dims(x_dim='x', y_dim='y', inplace=True)
     
-    spatial_data.rio.write_crs('EPSG:4326', inplace=True)
+    # Spatial CIMIS data is in EPSG:3310 (California Albers)
+    spatial_data.rio.write_crs('EPSG:3310', inplace=True)
     
     # Set CRS for GridMET data
     print("\n5. Setting CRS for GridMET data...")
@@ -163,14 +187,21 @@ def create_spatial_comparison_plot(config):
     
     gridmet_data.rio.write_crs('EPSG:4326', inplace=True)
     
+    # Reproject Spatial CIMIS to match shapefile CRS before clipping
+    print("\n6. Reprojecting Spatial CIMIS to match shapefile CRS...")
+    spatial_data_reproj = spatial_data.rio.reproject('EPSG:4326')
+    print(f"    Reprojected shape: {spatial_data_reproj.shape}")
+    
     # Clip both datasets to California
-    print("\n6. Clipping to California boundary...")
+    print("\n7. Clipping to California boundary...")
     print("  Clipping Spatial CIMIS...")
-    spatial_clipped = spatial_data.rio.clip(ca_shape.geometry, ca_shape.crs, drop=True)
+    # Extract individual geometries from the shapefile
+    ca_geometries = ca_shape.geometry.values
+    spatial_clipped = spatial_data_reproj.rio.clip(ca_geometries, ca_shape.crs, drop=True)
     print(f"    Clipped shape: {spatial_clipped.shape}")
     
     print("  Clipping GridMET...")
-    gridmet_clipped = gridmet_data.rio.clip(ca_shape.geometry, ca_shape.crs, drop=True)
+    gridmet_clipped = gridmet_data.rio.clip(ca_geometries, ca_shape.crs, drop=True)
     print(f"    Clipped shape: {gridmet_clipped.shape}")
     
     # Reproject GridMET to match Spatial CIMIS grid

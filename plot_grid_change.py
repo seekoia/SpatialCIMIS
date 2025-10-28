@@ -62,7 +62,7 @@ def plot_grid_change(before_date='2018-10-22', after_date='2018-10-24',
     print(f"\nLoading station metadata...")
     try:
         # Try to load from unified analysis output first
-        meta_file = '/home/salba/SpatialCIMIS/output/station_metadata_rs.csv'
+        meta_file = '/home/salba/SpatialCIMIS/output/test/station_metadata_rs.csv'
         if not os.path.exists(meta_file):
             # Fallback to main station list
             meta_file = '/group/moniergrp/SpatialCIMIS/CIMIS/CIMIS_Stations.csv'
@@ -71,7 +71,7 @@ def plot_grid_change(before_date='2018-10-22', after_date='2018-10-24',
         print(f"  Loaded {len(station_meta)} stations")
         
         # Load spatial CIMIS station data to determine which stations have coverage
-        spatial_data = pd.read_csv('/home/salba/SpatialCIMIS/output/spatial_cimis_station_rs.csv',
+        spatial_data = pd.read_csv('/home/salba/SpatialCIMIS/output/test/spatial_cimis_station_rs.csv',
                                    index_col='date', parse_dates=True)
         
         # Check which stations have data before/after

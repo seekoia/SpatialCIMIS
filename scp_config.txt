@@ -11,8 +11,8 @@ output_path = /home/salba/SpatialCIMIS/data/
 
 # Processing years
 start_year = 2004
-end_year = 2023
-mask_years = 2004-2023
+end_year = 2022
+mask_years = 2004-2022
 
 # Processing options (set to true/false)
 process_mask = false
