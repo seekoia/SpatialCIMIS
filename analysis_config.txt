@@ -33,7 +33,7 @@ station_data_output = station_{variable}_data.csv
 # Plotting options
 plot_spatial_comparison = true
 plot_station_timeseries = true
-#plot_stations = 158,152,117,15,136
-plot_stations = 144, 152, 131, 35, 105
+plot_stations = 158,152,117,15,136
+#plot_stations = 144, 152, 131, 35, 105
 
 
