@@ -22,6 +22,7 @@ import os
 import sys
 from datetime import datetime
 import warnings
+from glob import glob
 warnings.filterwarnings('ignore')
 
 try:
@@ -31,11 +32,18 @@ except ImportError:
     HAS_RIOXARRAY = False
     print("Warning: rioxarray not available. Some reprojection features will be limited.")
 
+try:
+    from netCDF4 import num2date
+    HAS_NETCDF4 = True
+except ImportError:
+    HAS_NETCDF4 = False
+    print("Warning: netCDF4 not available. Date conversion may be limited.")
+
 from rasterio.enums import Resampling
 from shapely.geometry import box
 
 
-def load_config(config_file='analysis_config.txt'):
+def load_config(config_file='spatial_cimis_config.txt'):
     """Load configuration from a text file."""
     config = {}
     try:
@@ -78,7 +86,8 @@ def get_default_config():
         'min_station_coverage': 600,
         'compute_climatology': True,
         'match_gridmet': True,
-        'extract_station_pixels': True
+        'extract_station_pixels': True,
+        'spatial_file_suffix': ''
     }
 
 
@@ -147,11 +156,39 @@ def load_station_data(config, station_list, variable_col_map):
     
     path_cimis = config.get('station_csv_path', '/group/moniergrp/SpatialCIMIS/CIMIS/')
     
-    # Get filenames
-    filenames = station_list['Name'].astype(str) + '.csv'
-    files = os.listdir(path_cimis) if os.path.exists(path_cimis) else []
-    filenames = [str(i) for i in filenames if i in files]
-    
+    # Get filenames - prefer {Original Name}_{StationNbr}.csv pattern but fall back to legacy names
+    station_file = config.get('station_list_file', 'CIMIS_Stations.csv')
+    try:
+        original_station_list = pd.read_csv(station_file)
+    except FileNotFoundError:
+        original_station_list = pd.DataFrame(columns=['StationNbr', 'Name'])
+    name_map = dict(zip(original_station_list.get('StationNbr', []), original_station_list.get('Name', [])))
+
+    available_files = set(os.listdir(path_cimis)) if os.path.exists(path_cimis) else set()
+    filenames = []
+    for _, row in station_list.iterrows():
+        station_nbr = row.get('StationNbr')
+        cleaned_name = row.get('Name', '')
+        original_name = name_map.get(station_nbr, cleaned_name)
+        candidates = []
+        if isinstance(original_name, str):
+            base = original_name.replace(' ', '_').replace('/', '_')
+            candidates.extend([
+                f"{base}_{station_nbr}.csv",
+                f"{base}.csv"
+            ])
+        if isinstance(cleaned_name, str):
+            candidates.extend([
+                f"{cleaned_name}_{station_nbr}.csv",
+                f"{cleaned_name}.csv"
+            ])
+
+        for candidate in candidates:
+            if candidate in available_files:
+                filenames.append(candidate)
+                break
+
+    filenames = sorted(set(filenames))
     print(f"  Found {len(filenames)} station files")
     
     # Variable column name mapping
@@ -210,12 +247,87 @@ def load_spatial_cimis_data(config):
     
     netcdf_path = config.get('spatial_netcdf_path', '/group/moniergrp/SpatialCIMIS/netcdf/')
     variable = config['variable']
+    suffix = config.get('spatial_file_suffix', '')
     
     # Load all yearly files
-    pattern = netcdf_path + f'spatial_cimis_{variable.lower()}_20*.nc'
+    filename_pattern = f"spatial_cimis_{variable.lower()}_20*{suffix}.nc"
+    pattern = os.path.join(netcdf_path, filename_pattern)
+    files = sorted(glob(pattern))
+
+    if not files:
+        raise FileNotFoundError(
+            f"No Spatial CIMIS files found for pattern: {pattern}. "
+            f"Check 'spatial_netcdf_path' and 'spatial_file_suffix' in the config."
+        )
+
     print(f"  Pattern: {pattern}")
+    print(f"  Files matched: {len(files)}")
     
-    ds = xr.open_mfdataset(pattern, combine='nested', concat_dim="time")
+    # Open dataset with decode_times=False initially to inspect time coordinate
+    ds = xr.open_mfdataset(files, combine='nested', concat_dim="time", decode_times=False)
+    
+    # Check time coordinate and convert to datetime64 if needed
+    if 'time' in ds.coords:
+        time_coord = ds['time']
+        time_values = time_coord.values
+        
+        # Check if time coordinate has units attribute
+        if hasattr(time_coord, 'units') and time_coord.units:
+            print(f"  Time units found: {time_coord.units}")
+            
+            # Convert numeric time values to datetime64 using units
+            if HAS_NETCDF4:
+                try:
+                    # Use num2date to convert based on units
+                    calendar = getattr(time_coord, 'calendar', 'standard')
+                    dates = num2date(time_values, time_coord.units, calendar=calendar)
+                    # Convert to pandas datetime then to numpy datetime64
+                    time_datetime64 = pd.to_datetime(dates).values
+                    # Update the time coordinate
+                    ds = ds.assign_coords(time=time_datetime64)
+                    print(f"  Converted time coordinate to datetime64 using units: {time_coord.units}")
+                except Exception as e:
+                    print(f"  Warning: Could not convert time using units ({e}), trying fallback...")
+                    # Fallback: try to decode times automatically
+                    ds.close()
+                    ds = xr.open_mfdataset(files, combine='nested', concat_dim="time", decode_times=True)
+            else:
+                # If netCDF4 not available, try xarray's automatic decoding
+                print(f"  netCDF4 not available, using xarray automatic time decoding...")
+                ds.close()
+                ds = xr.open_mfdataset(files, combine='nested', concat_dim="time", decode_times=True)
+        else:
+            # No units attribute - check if values are numeric and need conversion
+            print(f"  No time units attribute found")
+            if isinstance(time_values, np.ndarray):
+                if np.issubdtype(time_values.dtype, np.datetime64):
+                    print(f"  Time coordinate already in datetime64 format")
+                elif np.issubdtype(time_values.dtype, (np.integer, np.floating)):
+                    # Numeric values without units - try to infer
+                    print(f"  Time values are numeric (dtype: {time_values.dtype})")
+                    print(f"  First few values: {time_values[:5]}")
+                    # Check if values look like days since 1900-01-01 (GridMET style) or 2004-01-01
+                    if len(time_values) > 0:
+                        min_val = float(time_values.min())
+                        max_val = float(time_values.max())
+                        # Values around 37985 suggest days since 1900-01-01
+                        # Values around 0 or negative suggest days since 2004-01-01
+                        if min_val > 30000:  # Likely days since 1900-01-01
+                            ref_date = pd.Timestamp('1900-01-01')
+                            print(f"  Inferring reference date: 1900-01-01 (values suggest GridMET format)")
+                        elif min_val < 0 or max_val < 10000:  # Likely days since 2004-01-01
+                            ref_date = pd.Timestamp('2004-01-01')
+                            print(f"  Inferring reference date: 2004-01-01 (values suggest Spatial CIMIS format)")
+                        else:
+                            # Default to 2004-01-01 for Spatial CIMIS
+                            ref_date = pd.Timestamp('2004-01-01')
+                            print(f"  Using default reference date: 2004-01-01")
+                        
+                        time_datetime64 = ref_date + pd.to_timedelta(time_values, unit='D')
+                        time_datetime64 = time_datetime64.values
+                        ds = ds.assign_coords(time=time_datetime64)
+                        print(f"  Converted time coordinate to datetime64 using inferred reference date")
+    
     var_data = ds[variable]
     
     # Set CRS if rioxarray is available
@@ -224,12 +336,26 @@ def load_spatial_cimis_data(config):
         var_data.rio.write_nodata(np.nan, inplace=True)
     
     # Get lat/lon
-    spatial_lat = ds['lat'].isel(time=0)
-    spatial_lon = ds['lon'].isel(time=0)
+    if 'lat' in ds.coords and 'lon' in ds.coords:
+        spatial_lat = ds['lat']
+        spatial_lon = ds['lon']
+    elif 'y' in ds.coords and 'x' in ds.coords:
+        spatial_lat = ds['y']
+        spatial_lon = ds['x']
+    else:
+        spatial_lat = None
+        spatial_lon = None
     
     print(f"  Loaded {len(ds.time)} time steps")
     print(f"  Grid shape: {var_data.shape}")
-    print(f"  Time range: {ds.time.values[0]} to {ds.time.values[-1]}")
+    
+    # Display time range in a readable format
+    if hasattr(ds.time.values[0], 'year'):  # datetime64
+        print(f"  Time range: {ds.time.values[0]} to {ds.time.values[-1]}")
+    else:
+        print(f"  Time range: {ds.time.values[0]} to {ds.time.values[-1]}")
+        if hasattr(ds.time, 'units'):
+            print(f"    (Time units: {ds.time.units})")
     
     return var_data, spatial_lat, spatial_lon, ds
 
@@ -416,26 +542,86 @@ def extract_station_pixels(filtered_stations, spatial_data, gridmet_data, config
     stations_3310 = stations_gdf.to_crs('epsg:3310')
     
     # Get time coordinates from Spatial CIMIS
+    # Time coordinate should already be datetime64 from load_spatial_cimis_data, but verify
     time_coord = spatial_data.time.values
+    
+    # Convert to pandas datetime - should already be datetime64 from dataset loading
+    if isinstance(time_coord, np.ndarray):
+        if np.issubdtype(time_coord.dtype, np.datetime64):
+            # Already datetime64 - convert to pandas DatetimeIndex
+            time_coord = pd.to_datetime(time_coord)
+        else:
+            # Fallback: if somehow still numeric, try to convert
+            print(f"    Warning: Time coordinate is not datetime64 (dtype: {time_coord.dtype}), attempting conversion...")
+            if hasattr(spatial_data.time, 'units') and HAS_NETCDF4:
+                calendar = getattr(spatial_data.time, 'calendar', 'standard')
+                dates = num2date(time_coord, spatial_data.time.units, calendar=calendar)
+                time_coord = pd.to_datetime(dates)
+            elif len(time_coord) > 0 and (np.issubdtype(time_coord.dtype, (np.integer, np.floating))):
+                # Infer reference date
+                min_val = float(time_coord.min())
+                ref_date = pd.Timestamp('1900-01-01') if min_val > 30000 else pd.Timestamp('2004-01-01')
+                time_coord = ref_date + pd.to_timedelta(time_coord, unit='D')
+            else:
+                time_coord = pd.to_datetime(time_coord, errors='coerce')
+    elif not isinstance(time_coord, pd.DatetimeIndex):
+        time_coord = pd.to_datetime(time_coord, errors='coerce')
     
     print("  Extracting from Spatial CIMIS...")
     
-    # Extract Spatial CIMIS pixels for each station
-    spatial_station_data = {}
-    for idx, row in filtered_stations.iterrows():
-        station_num = str(row['StationNbr'])
-        try:
-            xx_3310 = stations_3310.loc[idx, 'geometry'].x
-            yy_3310 = stations_3310.loc[idx, 'geometry'].y
-            spatial_value = spatial_data.sel(x=xx_3310, y=yy_3310, method='nearest')
-            spatial_station_data[station_num] = spatial_value.values
-        except Exception as e:
-            print(f"    Warning: Could not extract Spatial CIMIS for station {station_num}: {e}")
-            continue
+    # Vectorized extraction for Spatial CIMIS (similar to GridMET)
+    try:
+        # Get station coordinates in EPSG:3310
+        station_x_3310 = xr.DataArray(stations_3310.geometry.x.values, dims='station')
+        station_y_3310 = xr.DataArray(stations_3310.geometry.y.values, dims='station')
+        
+        # Vectorized extraction
+        spatial_stations = spatial_data.sel(x=station_x_3310, y=station_y_3310, method='nearest')
+        spatial_stations_computed = spatial_stations.compute()
+        
+        # Create DataFrame with station numbers as columns
+        spatial_df = pd.DataFrame(
+            spatial_stations_computed.values.T,
+            index=time_coord,
+            columns=[str(row['StationNbr']) for _, row in filtered_stations.iterrows()]
+        )
+        
+        print(f"  ✓ Vectorized extraction successful for {len(spatial_df.columns)} stations")
+        
+    except Exception as e:
+        print(f"    Warning: Vectorized extraction failed: {e}")
+        print(f"    Falling back to station-by-station extraction...")
+        
+        # Fallback: extract station by station
+        spatial_station_data = {}
+        for idx, row in filtered_stations.iterrows():
+            station_num = str(row['StationNbr'])
+            try:
+                xx_3310 = stations_3310.loc[idx, 'geometry'].x
+                yy_3310 = stations_3310.loc[idx, 'geometry'].y
+                spatial_value = spatial_data.sel(x=xx_3310, y=yy_3310, method='nearest')
+                spatial_station_data[station_num] = spatial_value.values
+            except Exception as e:
+                print(f"      Warning: Could not extract Spatial CIMIS for station {station_num}: {e}")
+                continue
+        
+        spatial_df = pd.DataFrame(spatial_station_data, index=time_coord)
+    spatial_df.index.name = 'date'
     
-    spatial_df = pd.DataFrame(spatial_station_data)
-    spatial_df['date'] = time_coord
-    spatial_df.set_index('date', inplace=True)
+    # Ensure index is datetime format
+    if not isinstance(spatial_df.index, pd.DatetimeIndex):
+        spatial_df.index = pd.to_datetime(spatial_df.index, errors='coerce')
+    
+    # Verify date range
+    if len(spatial_df) > 0:
+        print(f"    Date range: {spatial_df.index.min()} to {spatial_df.index.max()}")
+    
+    # Apply unit conversion for Rs (MJ/m²/day to W/m²)
+    variable = config.get('variable', 'ETo')
+    if variable == 'Rs':
+        print(f"  Converting Rs from MJ/m²/day to W/m² (× 11.57)...")
+        spatial_df = spatial_df * 11.57
+        print(f"    Converted value range: {spatial_df.min().min():.2f} to {spatial_df.max().max():.2f} W/m²")
     
     print(f"  ✓ Extracted Spatial CIMIS for {len(spatial_df.columns)} stations")
     
@@ -452,12 +638,28 @@ def extract_station_pixels(filtered_stations, spatial_data, gridmet_data, config
             gridmet_stations = gridmet_data.sel(lon=station_lons, lat=station_lats, method='nearest')
             gridmet_stations_computed = gridmet_stations.compute()
             
+            # Get time coordinate and convert to pandas datetime
+            time_dim = 'day' if 'day' in gridmet_stations_computed.dims else 'time'
+            time_coord_gridmet = gridmet_stations_computed[time_dim].values
+            # Convert to pandas datetime - handle numpy datetime64 arrays
+            if isinstance(time_coord_gridmet, np.ndarray):
+                if np.issubdtype(time_coord_gridmet.dtype, np.datetime64):
+                    time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+                else:
+                    time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+            elif not isinstance(time_coord_gridmet, pd.DatetimeIndex):
+                time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+            
             gridmet_df = pd.DataFrame(
                 gridmet_stations_computed.values.T,
-                index=gridmet_stations_computed['day'].values,
+                index=time_coord_gridmet,
                 columns=[str(row['StationNbr']) for _, row in filtered_stations.iterrows()]
             )
             gridmet_df.index.name = 'date'
+            
+            # Ensure index is datetime format
+            if not isinstance(gridmet_df.index, pd.DatetimeIndex):
+                gridmet_df.index = pd.to_datetime(gridmet_df.index, errors='coerce')
             
             print(f"  ✓ Extracted GridMET for {len(gridmet_df.columns)} stations")
             
@@ -481,11 +683,25 @@ def extract_station_pixels(filtered_stations, spatial_data, gridmet_data, config
                     continue
             
             if gridmet_station_data:
-                # Get time dimension name
+                # Get time dimension name and convert to pandas datetime
                 time_dim = 'day' if 'day' in gridmet_data.dims else 'time'
-                gridmet_df = pd.DataFrame(gridmet_station_data)
-                gridmet_df['date'] = gridmet_data[time_dim].values
-                gridmet_df.set_index('date', inplace=True)
+                time_coord_gridmet = gridmet_data[time_dim].values
+                # Convert to pandas datetime - handle numpy datetime64 arrays
+                if isinstance(time_coord_gridmet, np.ndarray):
+                    if np.issubdtype(time_coord_gridmet.dtype, np.datetime64):
+                        time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+                    else:
+                        time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+                elif not isinstance(time_coord_gridmet, pd.DatetimeIndex):
+                    time_coord_gridmet = pd.to_datetime(time_coord_gridmet)
+                
+                gridmet_df = pd.DataFrame(gridmet_station_data, index=time_coord_gridmet)
+                gridmet_df.index.name = 'date'
+                
+                # Ensure index is datetime format
+                if not isinstance(gridmet_df.index, pd.DatetimeIndex):
+                    gridmet_df.index = pd.to_datetime(gridmet_df.index, errors='coerce')
+                
                 print(f"  ✓ Extracted GridMET for {len(gridmet_df.columns)} stations")
     
     return spatial_df, gridmet_df
@@ -509,8 +725,14 @@ def compute_climatology(var_data, config):
     output_path = config.get('output_path', '/home/salba/SpatialCIMIS/output/')
     os.makedirs(output_path, exist_ok=True)
     
-    output_file = config.get('spatial_mean_output', f'spatial_mean_{config["variable"]}.nc')
+    suffix = config.get('spatial_file_suffix', '')
+    output_file = config.get('spatial_mean_output', f'spatial_mean_{config["variable"]}{suffix}.nc')
     output_file = output_file.replace('{variable}', config['variable'].lower())
+    output_file = output_file.replace('{suffix}', suffix)  # Replace suffix placeholder
+    # Add suffix if not already in the filename and placeholder wasn't used
+    if suffix and suffix not in output_file:
+        base_name = output_file.replace('.nc', '')
+        output_file = f"{base_name}{suffix}.nc"
     output_filepath = output_path + output_file
     
     # Convert to dataset for saving with CRS
@@ -544,8 +766,16 @@ def compute_gridmet_climatology(gridmet_data, config):
     
     # Save
     output_path = config.get('output_path', '/home/salba/SpatialCIMIS/output/')
-    output_file = config.get('gridmet_mean_output', f'gridmet_mean_{config["variable"]}.nc')
+    # GridMET is always 4km, but use suffix from config if specified for consistency
+    suffix = config.get('spatial_file_suffix', '')
+    gridmet_suffix = suffix if suffix else '_4km'
+    output_file = config.get('gridmet_mean_output', f'gridmet_mean_{config["variable"]}{gridmet_suffix}.nc')
     output_file = output_file.replace('{variable}', config['variable'].lower())
+    output_file = output_file.replace('{suffix}', gridmet_suffix)  # Replace suffix placeholder
+    # Add suffix if not already in the filename and placeholder wasn't used
+    if gridmet_suffix and gridmet_suffix not in output_file:
+        base_name = output_file.replace('.nc', '')
+        output_file = f"{base_name}{gridmet_suffix}.nc"
     output_filepath = output_path + output_file
     
     # Convert to dataset for saving with CRS
@@ -571,8 +801,14 @@ def save_station_data(station_data, config):
     output_path = config.get('output_path', '/home/salba/SpatialCIMIS/output/')
     os.makedirs(output_path, exist_ok=True)
     
-    output_file = config.get('station_data_output', f'station_{config["variable"]}_data.csv')
+    suffix = config.get('spatial_file_suffix', '')
+    output_file = config.get('station_data_output', f'station_{config["variable"]}_data{suffix}.csv')
     output_file = output_file.replace('{variable}', config['variable'].lower())
+    output_file = output_file.replace('{suffix}', suffix)  # Replace suffix placeholder
+    # Add suffix if not already in the filename and placeholder wasn't used
+    if suffix and suffix not in output_file:
+        base_name = output_file.replace('.csv', '')
+        output_file = f"{base_name}{suffix}.csv"
     output_filepath = output_path + output_file
     
     station_data.to_csv(output_filepath)
@@ -585,20 +821,23 @@ def save_extracted_pixels(spatial_df, gridmet_df, filtered_stations, config):
     
     output_path = config.get('output_path', '/home/salba/SpatialCIMIS/output/')
     variable = config['variable']
+    suffix = config.get('spatial_file_suffix', '')
     
     # Save Spatial CIMIS station pixels
-    spatial_output = os.path.join(output_path, f'spatial_cimis_station_{variable.lower()}.csv')
+    spatial_output = os.path.join(output_path, f'spatial_cimis_station_{variable.lower()}{suffix}.csv')
     spatial_df.to_csv(spatial_output)
     print(f"  Saved Spatial CIMIS data: {spatial_output}")
     
     # Save GridMET station pixels if available
     if gridmet_df is not None:
-        gridmet_output = os.path.join(output_path, f'gridmet_station_{variable.lower()}.csv')
+        # GridMET is always 4km, but use suffix if specified for consistency
+        gridmet_suffix = suffix if suffix else '_4km'
+        gridmet_output = os.path.join(output_path, f'gridmet_station_{variable.lower()}{gridmet_suffix}.csv')
         gridmet_df.to_csv(gridmet_output)
         print(f"  Saved GridMET data: {gridmet_output}")
     
     # Save station metadata
-    station_metadata_output = os.path.join(output_path, f'station_metadata_{variable.lower()}.csv')
+    station_metadata_output = os.path.join(output_path, f'station_metadata_{variable.lower()}{suffix}.csv')
     filtered_stations[['StationNbr', 'Name', 'Latitude', 'Longitude', 'Elevation', 
                        'ConnectDate', 'DisconnectDate']].to_csv(station_metadata_output, index=False)
     print(f"  Saved station metadata: {station_metadata_output}")
@@ -611,7 +850,7 @@ def main():
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
     else:
-        config_file = 'analysis_config.txt'
+        config_file = 'spatial_cimis_config.txt'
     
     print("="*70)
     print("Unified Spatial CIMIS Data Analysis")

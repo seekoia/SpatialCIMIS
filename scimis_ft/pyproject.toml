@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scimis-ft"
+version = "0.1.0"
+description = "Weekly climatology and Fourier analysis tools for Spatial CIMIS NetCDF data."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Spatial CIMIS Team"}
+]
+license = {text = "MIT"}
+dependencies = [
+    "numpy",
+    "xarray",
+    "rioxarray",
+    "netCDF4",
+    "matplotlib",
+    "pandas",
+    "dask[array]",
+    "geopandas",
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib"]
+
+[project.scripts]
+scimis-ft = "scimis_ft.cli:main"
+

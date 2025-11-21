@@ -1,0 +1,11 @@
+# Spatial CIMIS Fourier pipeline configuration
+base_path=/group/moniergrp/SpatialCIMIS/netcdf/test
+file_identifier=rs
+netcdf_variable=Rs
+start_year=2004
+end_year=2022
+components=3
+output_dir=/home/salba/SpatialCIMIS/output/scimis_ft_rs_test
+clip_path=/home/salba/SpatialCIMIS/CA_State.shp
+
+file_pattern=spatial_cimis_rs_*_4km.nc

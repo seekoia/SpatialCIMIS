@@ -1,0 +1,97 @@
+# Spatial CIMIS Unified Configuration File
+# This configuration file is used by all three scripts:
+# - ascii_processing.py (ASCII to NetCDF conversion)
+# - spatial_cimis_unified.py (Data analysis and extraction)
+# - plot_comparison.py (Plotting and visualization)
+
+# ============================================================================
+# VARIABLE CONFIGURATION
+# ============================================================================
+# Variable to process/analyze (Tx, ETo, Tn, Rs, etc.)
+variable = ETo
+
+# ============================================================================
+# DATA PATHS
+# ============================================================================
+# ASCII input data path (for ascii_processing.py)
+data_path = /group/moniergrp/SpatialCIMIS/ascii/
+
+# NetCDF output path (for ascii_processing.py)
+netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/test/new_mask
+
+# Station CSV data path (for spatial_cimis_unified.py)
+station_csv_path = /group/moniergrp/SpatialCIMIS/CIMIS/
+
+# Station list file
+station_list_file = CIMIS_Stations.csv
+
+# Spatial CIMIS NetCDF path (for spatial_cimis_unified.py and plot_comparison.py)
+spatial_netcdf_path = /group/moniergrp/SpatialCIMIS/netcdf/test/new_mask
+
+# Spatial file suffix (e.g., _2km, _4km)
+spatial_file_suffix = _2km
+
+# GridMET NetCDF path (for spatial_cimis_unified.py and plot_comparison.py)
+gridmet_netcdf_path = /group/moniergrp/gridMET/
+
+# Output path for all scripts
+output_path = /home/salba/SpatialCIMIS/output/test/
+
+# Shapefile path for masking and plotting
+shapefile_path = CA_State.shp
+
+# ============================================================================
+# DATE/YEAR RANGE
+# ============================================================================
+# For ascii_processing.py (uses integer years)
+start_year = 2004
+end_year = 2024
+
+# For spatial_cimis_unified.py and plot_comparison.py (uses date strings)
+start_date = 2004-01-01
+end_date = 2024-01-01
+
+# ============================================================================
+# ASCII PROCESSING OPTIONS (ascii_processing.py)
+# ============================================================================
+# Target grid mode: native or gridmet
+target_mode = native
+
+# Processing flags
+process_mask = false
+process_data = true
+use_mask = true
+process_2d = false
+process_daily_clim = false
+process_monthly_clim = false
+process_all = false
+
+# ============================================================================
+# ANALYSIS OPTIONS (spatial_cimis_unified.py)
+# ============================================================================
+# Minimum station coverage threshold (days with data)
+min_station_coverage = 600
+
+# Analysis flags
+compute_climatology = true 
+match_gridmet = true
+extract_station_pixels = true
+
+# Output file name templates (suffix will be added automatically)
+spatial_mean_output = spatial_mean_{variable}{suffix}.nc
+gridmet_mean_output = gridmet_mean_{variable}{suffix}.nc
+station_data_output = station_{variable}_data{suffix}.csv
+
+# ============================================================================
+# PLOTTING OPTIONS (plot_comparison.py)
+# ============================================================================
+# Plot flags
+plot_spatial_comparison = true
+plot_station_timeseries = true
+plot_station_validation = true
+
+# Station numbers to plot (comma-separated)
+plot_stations = 158,84,117,15,136
+
+
+
